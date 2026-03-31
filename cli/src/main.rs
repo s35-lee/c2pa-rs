@@ -165,11 +165,14 @@ struct CliArgs {
 }
 
 fn default_settings_path() -> PathBuf {
-    let strategy = etcetera::choose_base_strategy().unwrap();
-    let mut path = strategy.config_dir();
-    path.push("c2pa");
-    path.push("c2pa.toml");
-    path
+    etcetera::choose_base_strategy()
+        .map(|strategy| {
+            let mut path = strategy.config_dir();
+            path.push("c2pa");
+            path.push("c2pa.toml");
+            path
+        })
+        .unwrap_or_else(|_| PathBuf::from("c2pa.toml"))
 }
 
 #[derive(Clone, Debug)]
@@ -606,6 +609,21 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     }
 }
 
+fn insert_claim_tool_generator(manifest: &mut ManifestDefinition) {
+    let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
+    tool_generator.set_version(env!("CARGO_PKG_VERSION"));
+
+    if let Some(existing_tool) = manifest
+        .claim_generator_info
+        .iter_mut()
+        .find(|info| info.name == env!("CARGO_PKG_NAME"))
+    {
+        *existing_tool = tool_generator;
+    } else {
+        manifest.claim_generator_info.insert(0, tool_generator);
+    }
+}
+
 // Utility to catch reader formatting errors and print the reader json or detailed json
 // formatting can fail if Reader CBOR is deeply nested or malformed
 fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
@@ -711,15 +729,7 @@ fn main() -> Result<()> {
         let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
-        let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
-        tool_generator.set_version(env!("CARGO_PKG_VERSION"));
-        if !manifest.claim_generator_info.is_empty()
-            || manifest.claim_generator_info[0].name == "c2pa-rs"
-        {
-            manifest.claim_generator_info = vec![tool_generator];
-        } else {
-            manifest.claim_generator_info.insert(1, tool_generator);
-        }
+        insert_claim_tool_generator(&mut manifest);
 
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
@@ -981,5 +991,36 @@ pub mod tests {
         println!("{ms}");
         //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
         assert!(ms.contains("my_key"));
+    }
+
+    #[test]
+    fn claim_tool_generator_is_inserted_without_dropping_existing_entries() {
+        let mut manifest = ManifestDefinition::default();
+        manifest
+            .claim_generator_info
+            .push(ClaimGeneratorInfo::new("existing-tool"));
+
+        insert_claim_tool_generator(&mut manifest);
+
+        assert_eq!(manifest.claim_generator_info.len(), 2);
+        assert_eq!(manifest.claim_generator_info[0].name, env!("CARGO_PKG_NAME"));
+        assert_eq!(manifest.claim_generator_info[1].name, "existing-tool");
+    }
+
+    #[test]
+    fn claim_tool_generator_is_updated_in_place() {
+        let mut manifest = ManifestDefinition::default();
+        manifest
+            .claim_generator_info
+            .push(ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME")));
+
+        insert_claim_tool_generator(&mut manifest);
+
+        assert_eq!(manifest.claim_generator_info.len(), 1);
+        assert_eq!(manifest.claim_generator_info[0].name, env!("CARGO_PKG_NAME"));
+        assert_eq!(
+            manifest.claim_generator_info[0].version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 }

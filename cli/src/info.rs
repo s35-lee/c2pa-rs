@@ -36,7 +36,7 @@ pub fn info(path: &Path) -> Result<()> {
         }
     }
 
-    let file_size = std::fs::metadata(path).unwrap().len();
+    let file_size = std::fs::metadata(path)?.len();
     if let Some(manifest_data) = ingredient.manifest_data() {
         if is_cloud_manifest {
             println!(
